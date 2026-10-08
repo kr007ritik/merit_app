@@ -12,8 +12,17 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def process_merit_logic(file_path, output_path):
   # Read Excel
-  df_raw = pd.read_excel(file_path, sheet_name='raw_data')
-  df_vac = pd.read_excel(file_path, sheet_name='vacency')
+  xls = pd.ExcelFile(file_path)
+  sheet_names = [s.strip() for s in xls.sheet_names]
+
+  if 'raw_data' not in sheet_names or 'vacency' not in sheet_names:
+    raise ValueError(
+        f'Excel file me `raw_data` aur `vacency` sheets honi chahiye. Found:'
+        f' {sheet_names}'
+    )
+
+  df_raw = pd.read_excel(xls, sheet_name='raw_data')
+  df_vac = pd.read_excel(xls, sheet_name='vacency')
 
   # Date Parsing
   df_raw['dob_dt'] = pd.to_datetime(
@@ -22,7 +31,7 @@ def process_merit_logic(file_path, output_path):
 
   # Student Unique Identifier Key
   df_raw['student_key'] = (
-      df_raw['student_name']
+      df_raw['student_name'].astype(str)
       + '_'
       + df_raw['mobile_no'].astype(str)
       + '_'
@@ -199,10 +208,7 @@ def index():
             download_name='Generated_Merit_List.xlsx',
         )
       except Exception as e:
-        flash(
-            f'Processing Error: Sheet names `raw_data` aur `vacency` sahi'
-            f' honi chahein! Detial: {str(e)}'
-        )
+        flash(f'Error: {str(e)}')
         return redirect(request.url)
     else:
       flash('Keval .xlsx ya .xls Excel file upload karein!')
