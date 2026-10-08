@@ -1,18 +1,19 @@
-from datetime import datetime
+from io import BytesIO
 import os
 from flask import Flask, flash, redirect, render_template, request, send_file
 import pandas as pd
 
 app = Flask(__name__)
-app.secret_key = 'merit_portal_secret_key'
-
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.secret_key = os.environ.get('SECRET_KEY', 'super_secret_merit_key_123')
 
 
-def process_merit_logic(file_path, output_path):
-  # Read Excel File
-  xls = pd.ExcelFile(file_path)
+@app.route('/favicon.ico')
+def favicon():
+  return '', 204
+
+
+def process_merit_logic(file_bytes):
+  xls = pd.ExcelFile(BytesIO(file_bytes))
   sheet_names = [s.strip() for s in xls.sheet_names]
 
   if 'raw_data' not in sheet_names or 'vacency' not in sheet_names:
@@ -24,11 +25,9 @@ def process_merit_logic(file_path, output_path):
   df_raw = pd.read_excel(xls, sheet_name='raw_data')
   df_vac = pd.read_excel(xls, sheet_name='vacency')
 
-  # Clean Column Names (strip spaces)
   df_raw.columns = df_raw.columns.str.strip()
   df_vac.columns = df_vac.columns.str.strip()
 
-  # Mandatory Columns Verification
   required_raw_cols = [
       'student_name',
       'mobile_no',
@@ -43,34 +42,30 @@ def process_merit_logic(file_path, output_path):
   if missing_cols:
     raise ValueError(f"`raw_data` sheet me missing columns: {missing_cols}")
 
-  # Clean Data
+  # Cleaning
   df_raw['student_name'] = df_raw['student_name'].astype(str).str.strip()
   df_raw['mobile_no'] = df_raw['mobile_no'].astype(str).str.strip()
   df_raw['dob_str'] = df_raw['dob_(dd-mm-yyyy)'].astype(str).str.strip()
-
   df_raw['12th %'] = pd.to_numeric(df_raw['12th %'], errors='coerce').fillna(0)
   df_raw['10th %'] = pd.to_numeric(df_raw['10th %'], errors='coerce').fillna(0)
-
-  # Date Parsing
   df_raw['dob_dt'] = pd.to_datetime(
       df_raw['dob_str'], format='%d-%m-%Y', errors='coerce'
   )
 
-  # Student Key
   df_raw['student_key'] = (
       df_raw['student_name'] + '_' + df_raw['mobile_no'] + '_' + df_raw['dob_str']
   )
 
-  # Vacancy Dictionary
+  # Vacancy Map
   df_vac['college_name_clean'] = df_vac['college_name'].astype(str).str.strip()
   df_vac['subject_clean'] = df_vac['subject'].astype(str).str.strip()
 
   current_vac = {}
-  for _, row in df_vac.iterrows():
+  for row in df_vac.to_dict('records'):
     key = (row['college_name_clean'], row['subject_clean'])
     current_vac[key] = int(row['vacent_seat'])
 
-  # Merit Ranking
+  # Grouping & Ranking
   student_merit_list = df_raw.groupby('student_key').first().reset_index()
   student_merit_list = student_merit_list.sort_values(
       by=['12th %', '10th %', 'dob_dt', 'student_name'],
@@ -79,29 +74,34 @@ def process_merit_logic(file_path, output_path):
 
   student_merit_list['overall_merit_rank'] = student_merit_list.index + 1
 
-  # Allotment Logic
+  # Allotment using Pure Python Dicts (Super Fast)
+  raw_records = df_raw.to_dict('records')
+  apps_by_student = {}
+  for rec in raw_records:
+    s_key = rec['student_key']
+    if s_key not in apps_by_student:
+      apps_by_student[s_key] = []
+    apps_by_student[s_key].append(rec)
+
   allotment_results = []
-  for idx, st in student_merit_list.iterrows():
+  for st in student_merit_list.to_dict('records'):
     st_key = st['student_key']
     rank = st['overall_merit_rank']
+    st_apps = apps_by_student.get(st_key, [])
 
-    st_apps = df_raw[df_raw['student_key'] == st_key].copy()
     selected = False
     allotted_info = {}
 
-    for _, app in st_apps.iterrows():
+    for app in st_apps:
       if selected:
         break
-
       sub = str(app['subject']).strip()
       form_no = app['unique_id']
 
       for pref_num in [1, 2, 3]:
         pref_col = f'college_preferance_{pref_num}'
-        if pref_col not in app:
-          continue
+        col_name = app.get(pref_col, None)
 
-        col_name = app[pref_col]
         if (
             pd.isna(col_name)
             or str(col_name).strip() == ''
@@ -115,7 +115,6 @@ def process_merit_logic(file_path, output_path):
         if current_vac.get(vac_key, 0) > 0:
           selected = True
           current_vac[vac_key] -= 1
-
           allotted_info = {
               'student_key': st_key,
               'overall_merit_rank': rank,
@@ -147,38 +146,48 @@ def process_merit_logic(file_path, output_path):
           'preference_matched': 'N/A',
           'selection_status': 'Not Selected',
       }
-
     allotment_results.append(allotted_info)
 
   df_merit_summary = pd.DataFrame(allotment_results)
 
-  # Cutoff Sheet
+  # Cutoff Details Sheet
   selected_students = df_merit_summary[
       df_merit_summary['selection_status'] == 'Selected'
   ].copy()
-  cutoff_df = (
-      selected_students.groupby(['allocated_college', 'allocated_subject'])
-      .agg(
-          total_selected=('student_key', 'count'),
-          max_selected_12th_pct=('12th %', 'max'),
-          cutoff_12th_pct=('12th %', 'min'),
-          last_selected_10th_pct=('10th %', 'min'),
-      )
-      .reset_index()
-  )
+  if not selected_students.empty:
+    cutoff_df = (
+        selected_students.groupby(['allocated_college', 'allocated_subject'])
+        .agg(
+            total_selected=('student_key', 'count'),
+            max_selected_12th_pct=('12th %', 'max'),
+            cutoff_12th_pct=('12th %', 'min'),
+            last_selected_10th_pct=('10th %', 'min'),
+        )
+        .reset_index()
+    )
+    cutoff_df.rename(
+        columns={
+            'allocated_college': 'college_name',
+            'allocated_subject': 'subject',
+            'max_selected_12th_pct': 'max_selected_12th_%',
+            'cutoff_12th_pct': 'cutoff_12th_%',
+            'last_selected_10th_pct': 'last_selected_10th_%',
+        },
+        inplace=True,
+    )
+  else:
+    cutoff_df = pd.DataFrame(
+        columns=[
+            'college_name',
+            'subject',
+            'total_selected',
+            'max_selected_12th_%',
+            'cutoff_12th_%',
+            'last_selected_10th_%',
+        ]
+    )
 
-  cutoff_df.rename(
-      columns={
-          'allocated_college': 'college_name',
-          'allocated_subject': 'subject',
-          'max_selected_12th_pct': 'max_selected_12th_%',
-          'cutoff_12th_pct': 'cutoff_12th_%',
-          'last_selected_10th_pct': 'last_selected_10th_%',
-      },
-      inplace=True,
-  )
-
-  # Vacancy Sheet Update
+  # Updated Vacancy Sheet
   df_updated_vac = df_vac.copy()
 
   def get_remaining_seats(row):
@@ -197,12 +206,16 @@ def process_merit_logic(file_path, output_path):
       errors='ignore',
   )
 
-  # Save Excel
-  with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+  # Output Bytes
+  output = BytesIO()
+  with pd.ExcelWriter(output, engine='openpyxl') as writer:
     df_merit_summary.to_excel(writer, sheet_name='merit_list', index=False)
     cutoff_df.to_excel(writer, sheet_name='cutoff_details', index=False)
     df_raw.to_excel(writer, sheet_name='raw_data', index=False)
     df_updated_vac.to_excel(writer, sheet_name='updated_vacency', index=False)
+
+  output.seek(0)
+  return output
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -220,17 +233,14 @@ def index():
     if file and (
         file.filename.endswith('.xlsx') or file.filename.endswith('.xls')
     ):
-      input_filepath = os.path.join(UPLOAD_FOLDER, 'uploaded_data.xlsx')
-      output_filepath = os.path.join(UPLOAD_FOLDER, 'merit_list_result.xlsx')
-
-      file.save(input_filepath)
-
       try:
-        process_merit_logic(input_filepath, output_filepath)
+        file_bytes = file.read()
+        output_data = process_merit_logic(file_bytes)
         return send_file(
-            output_filepath,
+            output_data,
             as_attachment=True,
             download_name='Generated_Merit_List.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
       except Exception as e:
         flash(f'Processing Error: {str(e)}')
