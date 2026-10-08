@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="hi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Merit List Generation Portal</title>
+    <!-- Bootstrap 5 CSS -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background-color: #f8f9fa;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+      .upload-card {
+        max-width: 650px;
+        margin: 60px auto;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      }
+      .header-title {
+        background: linear-gradient(135deg, #0d6efd, #0a58ca);
+        color: white;
+        padding: 25px;
+        border-radius: 12px 12px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card upload-card border-0">
+        <div class="header-title text-center">
+          <h3 class="mb-1">🎓 Merit List Generator Portal</h3>
+          <p class="mb-0 fs-6">
+            Upload raw student data & vacancy sheet to generate instant merit
+            list
+          </p>
+        </div>
+        <div class="card-body p-4">
+          {% with messages = get_flashed_messages() %} {% if messages %} {% for
+          message in messages %}
+          <div
+            class="alert alert-danger alert-dismissible fade show"
+            role="alert"
+          >
+            {{ message }}
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="alert"
+              aria-label="Close"
+            ></button>
+          </div>
+          {% endfor %} {% endif %} {% endwith %}
+
+          <form action="/" method="POST" enctype="multipart/form-data">
+            <div class="mb-4">
+              <label for="excel_file" class="form-label fw-semibold"
+                >Select Excel File (.xlsx):</label
+              >
+              <input
+                class="form-control form-control-lg"
+                type="file"
+                id="excel_file"
+                name="excel_file"
+                accept=".xlsx, .xls"
+                required
+              />
+              <div class="form-text mt-2">
+                <strong>Note:</strong> Excel file me 2 sheets honi zaruri hain:
+                <span class="badge bg-secondary">raw_data</span> aur
+                <span class="badge bg-secondary">vacency</span>
+              </div>
+            </div>
+
+            <div class="d-grid gap-2">
+              <button type="submit" class="btn btn-primary btn-lg shadow-sm">
+                ⚡ Generate & Download Merit List
+              </button>
+            </div>
+          </form>
+
+          <hr class="my-4" />
+          <div class="small text-muted">
+            <h6>Features included in output file:</h6>
+            <ul>
+              <li>
+                <strong>Merit List Sheet:</strong> Tie-breaking, mobile tracking
+                & seat allotment status
+              </li>
+              <li>
+                <strong>Cutoff Details Sheet:</strong> College & Subject wise
+                minimum % cutoff
+              </li>
+              <li>
+                <strong>Updated Vacancy Sheet:</strong> Automatically deducted
+                vacant seats
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
